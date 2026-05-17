@@ -151,7 +151,7 @@ class Journal(Base, TimestampMixin):
     )
     extra: Mapped[dict] = mapped_column(JSONColumn, default=dict, nullable=False)
 
-    lines: Mapped[list["JournalLine"]] = relationship(
+    lines: Mapped[list[JournalLine]] = relationship(
         back_populates="journal",
         cascade="all, delete-orphan",
         order_by="JournalLine.line_no",

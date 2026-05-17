@@ -8,11 +8,11 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import Date, Enum, ForeignKey, Index, Numeric, String, UniqueConstraint
-from ..types import JSONColumn
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..db import Base, TimestampMixin, new_uuid
+from ..types import JSONColumn
 
 
 class PayrollStatus(str, enum.Enum):
@@ -58,7 +58,7 @@ class PayrollRun(Base, TimestampMixin):
         PG_UUID(as_uuid=True), ForeignKey("journal.id")
     )
 
-    payslips: Mapped[list["Payslip"]] = relationship(
+    payslips: Mapped[list[Payslip]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
 

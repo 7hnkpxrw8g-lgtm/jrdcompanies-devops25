@@ -24,8 +24,8 @@ class Organization(Base, TimestampMixin):
     base_currency: Mapped[str] = mapped_column(String(3), default="USD", nullable=False)
     fiscal_year_start_month: Mapped[int] = mapped_column(default=1, nullable=False)
 
-    entities: Mapped[list["Entity"]] = relationship(back_populates="organization")
-    memberships: Mapped[list["Membership"]] = relationship(back_populates="organization")
+    entities: Mapped[list[Entity]] = relationship(back_populates="organization")
+    memberships: Mapped[list[Membership]] = relationship(back_populates="organization")
 
 
 class Entity(Base, TimestampMixin):
@@ -60,7 +60,7 @@ class User(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    memberships: Mapped[list["Membership"]] = relationship(back_populates="user")
+    memberships: Mapped[list[Membership]] = relationship(back_populates="user")
 
 
 class Role(str, enum.Enum):

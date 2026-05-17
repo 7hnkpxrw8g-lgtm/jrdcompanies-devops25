@@ -11,7 +11,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models.accounting import Account, AccountType
 from ..models.banking import BankAccount, BankTransaction, BankTxStatus
 from ..models.commerce import Bill, DocStatus, Invoice
 from ..security import AuthContext, require_org

@@ -206,13 +206,7 @@ def test_categorize_bank_transaction(client: TestClient) -> None:
     ).json()
     assert txns, "Seed should leave unreconciled transactions"
     txn = txns[0]
-    entity_id = txn["bank_account_id"]  # fetch entity via bank account
-    # find a target account (e.g., revenue 4000 for the entity)
     bank = client.get("/banking/accounts", headers=headers).json()
-    ba = next(b for b in bank if b["id"] == txn["bank_account_id"])
-    # Get accounts for entity associated with this bank account by listing
-    # transactions and finding a matching entity.
-    # Simpler: pick any expense/revenue account in any entity.
     entities = client.get("/entities", headers=headers).json()
     accts = client.get(
         f"/accounts?entity_id={entities[0]['id']}", headers=headers

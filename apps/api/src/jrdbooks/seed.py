@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy.exc import IntegrityError
@@ -141,7 +141,7 @@ def seed() -> None:
                         last_balance=balance,
                         provider="seed",
                         external_id=f"{entity.code}-{code}",
-                        last_sync_at=datetime.now(timezone.utc),
+                        last_sync_at=datetime.now(UTC),
                     )
                 )
 

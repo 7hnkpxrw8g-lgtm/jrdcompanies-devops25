@@ -20,11 +20,11 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from ..types import JSONColumn
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..db import Base, TimestampMixin, new_uuid
+from ..types import JSONColumn
 
 
 class Customer(Base, TimestampMixin):
@@ -129,7 +129,7 @@ class Invoice(Base, TimestampMixin):
         PG_UUID(as_uuid=True), ForeignKey("journal.id")
     )
 
-    lines: Mapped[list["InvoiceLine"]] = relationship(
+    lines: Mapped[list[InvoiceLine]] = relationship(
         back_populates="invoice",
         cascade="all, delete-orphan",
         order_by="InvoiceLine.line_no",

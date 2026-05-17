@@ -22,8 +22,8 @@ os.environ.setdefault(
     f"postgresql+psycopg://jrd:jrd@localhost:5432/jrdbooks_test_{uuid.uuid4().hex[:8]}",
 )
 
-from jrdbooks.db import Base  # noqa: E402
-from jrdbooks.models import (  # noqa: E402, F401
+from jrdbooks.db import Base
+from jrdbooks.models import (
     Account,
     Entity,
     Organization,

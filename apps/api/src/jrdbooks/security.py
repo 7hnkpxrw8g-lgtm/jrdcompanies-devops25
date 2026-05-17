@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -29,12 +29,12 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 def create_access_token(user_id: UUID, org_id: UUID | None = None) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expires_minutes)
+    expire = datetime.now(UTC) + timedelta(minutes=settings.jwt_expires_minutes)
     payload = {
         "sub": str(user_id),
         "org_id": str(org_id) if org_id else None,
         "exp": expire,
-        "iat": datetime.now(timezone.utc),
+        "iat": datetime.now(UTC),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 

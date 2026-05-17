@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import enum
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (
     Date,
-    DateTime,
     Enum,
     ForeignKey,
     Index,
@@ -78,7 +77,7 @@ class RepairOrder(Base, TimestampMixin):
     external_id: Mapped[str | None] = mapped_column(String(128))  # Tekmetric, etc.
     notes: Mapped[str | None] = mapped_column(Text)
 
-    lines: Mapped[list["RepairOrderLine"]] = relationship(
+    lines: Mapped[list[RepairOrderLine]] = relationship(
         back_populates="repair_order",
         cascade="all, delete-orphan",
         order_by="RepairOrderLine.line_no",

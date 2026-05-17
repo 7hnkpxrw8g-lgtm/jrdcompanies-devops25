@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -35,7 +35,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
     )
     org = db.get(Organization, membership.org_id) if membership else None
 
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = datetime.now(UTC)
     db.commit()
 
     return TokenResponse(

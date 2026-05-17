@@ -12,7 +12,7 @@ via `reverse_journal`, which creates a brand-new offsetting journal.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -109,7 +109,7 @@ def post_journal(
         db.add(entry)
 
     journal.status = JournalStatus.POSTED
-    journal.posted_at = datetime.now(timezone.utc)
+    journal.posted_at = datetime.now(UTC)
     journal.posted_by = actor_user_id
 
     db.add(

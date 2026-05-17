@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from .models.accounting import AccountType, JournalSource, JournalStatus
 
-
 # ---------- Auth ----------
 
 
