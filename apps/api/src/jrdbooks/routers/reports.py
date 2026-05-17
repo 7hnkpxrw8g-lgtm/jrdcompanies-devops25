@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import csv
+import io
 from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import and_, select
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from ..accounting import balances_by_account, trial_balance
@@ -268,3 +271,332 @@ def ar_aging_report(
         )
     out.sort(key=lambda r: r["total"], reverse=True)
     return out
+
+
+@router.get("/ap-aging")
+def ap_aging_report(
+    entity_id: UUID,
+    as_of: date | None = None,
+    ctx: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """Vendor-level aging buckets: current / 1-30 / 31-60 / 61-90 / 90+."""
+    from datetime import date as _date
+
+    from ..models.commerce import Bill, DocStatus, Vendor
+
+    as_of = as_of or _date.today()
+    by_vendor: dict[UUID, dict] = {}
+
+    bills = (
+        db.query(Bill)
+        .filter(
+            Bill.entity_id == entity_id,
+            Bill.status.in_(
+                [DocStatus.APPROVED, DocStatus.SENT, DocStatus.PARTIAL, DocStatus.OVERDUE]
+            ),
+        )
+        .all()
+    )
+    for bill in bills:
+        outstanding = bill.total - bill.amount_paid
+        if outstanding <= 0:
+            continue
+        days = (as_of - bill.due_date).days
+        if days <= 0:
+            bucket = "current"
+        elif days <= 30:
+            bucket = "1_30"
+        elif days <= 60:
+            bucket = "31_60"
+        elif days <= 90:
+            bucket = "61_90"
+        else:
+            bucket = "over_90"
+        row = by_vendor.setdefault(
+            bill.vendor_id,
+            {
+                "vendor_id": bill.vendor_id,
+                "current": ZERO,
+                "1_30": ZERO,
+                "31_60": ZERO,
+                "61_90": ZERO,
+                "over_90": ZERO,
+                "total": ZERO,
+            },
+        )
+        row[bucket] += outstanding
+        row["total"] += outstanding
+
+    vendors = {
+        v.id: v.display_name
+        for v in db.query(Vendor).filter(Vendor.id.in_(by_vendor.keys())).all()
+    }
+    out = []
+    for row in by_vendor.values():
+        out.append(
+            {
+                "vendor_id": str(row["vendor_id"]),
+                "vendor": vendors.get(row["vendor_id"], "—"),
+                "current": float(row["current"]),
+                "1_30": float(row["1_30"]),
+                "31_60": float(row["31_60"]),
+                "61_90": float(row["61_90"]),
+                "over_90": float(row["over_90"]),
+                "total": float(row["total"]),
+            }
+        )
+    out.sort(key=lambda r: r["total"], reverse=True)
+    return out
+
+
+@router.get("/cash-flow")
+def cash_flow_report(
+    entity_id: UUID,
+    start: date,
+    end: date,
+    ctx: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Indirect cash flow statement derived from the ledger.
+
+    Operating = net income + non-cash adjustments (depreciation) + working capital changes.
+    Investing / Financing buckets come from designated account flags.
+    """
+    sums = balances_by_account(db, entity_id, start=start, as_of=end)
+    accounts = (
+        db.execute(select(Account).where(Account.entity_id == entity_id)).scalars().all()
+    )
+
+    net_income = ZERO
+    depreciation = ZERO
+    operating_changes = ZERO
+    investing = ZERO
+    financing = ZERO
+    beginning_cash = ZERO
+    ending_cash = ZERO
+
+    # P&L → net income
+    for acct in accounts:
+        amt = sums.get(acct.id, ZERO)
+        if amt == 0:
+            continue
+        natural = signed_balance_for_type(amt, acct.type)
+        if acct.type in {AccountType.REVENUE, AccountType.CONTRA_REVENUE}:
+            net_income += natural
+        elif acct.type == AccountType.EXPENSE:
+            net_income -= natural
+            if "depreciation" in acct.name.lower():
+                depreciation += natural
+
+    # Cash position deltas
+    cash_acct_ids = [a.id for a in accounts if a.is_bank or a.is_cash]
+    for acct_id in cash_acct_ids:
+        beginning_cash += account_balance_helper(db, acct_id, end=start)
+        ending_cash += account_balance_helper(db, acct_id, end=end)
+
+    # Working capital: AR + AP changes
+    for acct in accounts:
+        if acct.is_ar:
+            delta = sums.get(acct.id, ZERO)
+            operating_changes -= delta  # AR ↑ reduces cash
+        elif acct.is_ap:
+            delta = sums.get(acct.id, ZERO)
+            operating_changes -= delta  # AP ↑ increases cash → -(-) = +
+
+    # Investing: changes in fixed-asset accounts (non-bank, non-cash assets)
+    for acct in accounts:
+        if acct.type == AccountType.ASSET and not (acct.is_bank or acct.is_cash or acct.is_ar):
+            investing -= sums.get(acct.id, ZERO)
+        elif acct.type == AccountType.CONTRA_ASSET:
+            investing += sums.get(acct.id, ZERO)
+
+    # Financing: equity contributions/distributions, notes payable changes
+    for acct in accounts:
+        if acct.type == AccountType.EQUITY or (
+            acct.type == AccountType.LIABILITY
+            and "note" in acct.name.lower()
+        ):
+            financing -= sums.get(acct.id, ZERO)
+
+    operating_total = net_income + depreciation + operating_changes
+    net_change = operating_total + investing + financing
+
+    return {
+        "entity_id": str(entity_id),
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "operating": {
+            "net_income": float(net_income),
+            "depreciation": float(depreciation),
+            "working_capital_changes": float(operating_changes),
+            "total": float(operating_total),
+        },
+        "investing": {"total": float(investing)},
+        "financing": {"total": float(financing)},
+        "net_change_in_cash": float(net_change),
+        "beginning_cash": float(beginning_cash),
+        "ending_cash": float(ending_cash),
+        "reconciliation_delta": float(ending_cash - beginning_cash - net_change),
+    }
+
+
+def account_balance_helper(db: Session, account_id: UUID, end: date) -> Decimal:
+    """Lightweight balance lookup used by cash-flow."""
+    stmt = (
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .where(LedgerEntry.account_id == account_id)
+        .where(LedgerEntry.posting_date < end)
+    )
+    return Decimal(db.execute(stmt).scalar_one() or 0)
+
+
+@router.get("/inventory-valuation")
+def inventory_valuation_report(
+    entity_id: UUID,
+    ctx: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    from ..models.inventory import InventoryItem
+
+    items = (
+        db.query(InventoryItem)
+        .filter(InventoryItem.entity_id == entity_id, InventoryItem.is_active.is_(True))
+        .order_by(InventoryItem.sku)
+        .all()
+    )
+    return [
+        {
+            "item_id": str(it.id),
+            "sku": it.sku,
+            "name": it.name,
+            "on_hand": float(it.on_hand),
+            "avg_cost": float(it.avg_cost),
+            "value": float(it.on_hand * it.avg_cost),
+            "below_reorder": it.on_hand < it.reorder_point,
+        }
+        for it in items
+    ]
+
+
+@router.get("/fuel-variance")
+def fuel_variance_report(
+    entity_id: UUID,
+    start: date | None = None,
+    end: date | None = None,
+    ctx: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+) -> dict:
+    from ..models.fuel_ops import FuelDispense, FuelTank
+
+    tanks = (
+        db.query(FuelTank)
+        .filter(FuelTank.entity_id == entity_id, FuelTank.is_active.is_(True))
+        .all()
+    )
+    out_tanks = []
+    grand_variance_gal = ZERO
+    grand_variance_value = ZERO
+    for tank in tanks:
+        q = db.query(FuelDispense).filter(FuelDispense.tank_id == tank.id)
+        if start:
+            q = q.filter(FuelDispense.dispense_date >= start)
+        if end:
+            q = q.filter(FuelDispense.dispense_date <= end)
+        dispenses = q.all()
+        total_gal_sold = sum((d.gallons_sold for d in dispenses), ZERO)
+        total_variance_gal = sum((d.variance_gallons for d in dispenses), ZERO)
+        total_variance_val = sum((d.variance_value for d in dispenses), ZERO)
+        grand_variance_gal += total_variance_gal
+        grand_variance_value += total_variance_val
+        out_tanks.append(
+            {
+                "tank_id": str(tank.id),
+                "name": tank.name,
+                "fuel_type": tank.fuel_type,
+                "gallons_sold": float(total_gal_sold),
+                "variance_gallons": float(total_variance_gal),
+                "variance_value": float(total_variance_val),
+                "pct_variance": (
+                    float(total_variance_gal / total_gal_sold * 100)
+                    if total_gal_sold > 0
+                    else 0.0
+                ),
+            }
+        )
+    return {
+        "entity_id": str(entity_id),
+        "start": start.isoformat() if start else None,
+        "end": end.isoformat() if end else None,
+        "tanks": out_tanks,
+        "totals": {
+            "variance_gallons": float(grand_variance_gal),
+            "variance_value": float(grand_variance_value),
+        },
+    }
+
+
+# ---------- Exports ----------
+
+
+def _csv_response(rows: list[dict], filename: str) -> StreamingResponse:
+    if not rows:
+        rows = [{"_empty": "no data"}]
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    writer.writeheader()
+    writer.writerows(rows)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/trial-balance.csv")
+def trial_balance_csv(
+    entity_id: UUID,
+    as_of: date | None = None,
+    ctx: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    rows = trial_balance(db, entity_id, as_of=as_of)
+    flat = [
+        {
+            "code": r["code"],
+            "name": r["name"],
+            "type": r["type"],
+            "debit": float(r["debit"]),
+            "credit": float(r["credit"]),
+        }
+        for r in rows
+    ]
+    return _csv_response(flat, f"trial-balance-{(as_of or date.today()).isoformat()}.csv")
+
+
+@router.get("/general-ledger.csv")
+def general_ledger_csv(
+    entity_id: UUID,
+    start: date | None = None,
+    end: date | None = None,
+    account_id: UUID | None = Query(default=None),
+    ctx: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    rows = general_ledger_report(
+        entity_id=entity_id, account_id=account_id, start=start, end=end, ctx=ctx, db=db
+    )
+    flat = [
+        {
+            "posting_date": r["posting_date"],
+            "account_code": r["account_code"],
+            "account_name": r["account_name"],
+            "debit": r["debit"],
+            "credit": r["credit"],
+            "description": r["description"] or "",
+            "journal_id": r["journal_id"],
+        }
+        for r in rows
+    ]
+    return _csv_response(flat, f"general-ledger-{(end or date.today()).isoformat()}.csv")

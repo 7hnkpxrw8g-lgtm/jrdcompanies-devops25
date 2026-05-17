@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..accounting import PostingError, post_journal
+from ..ai import suggest_for_transaction
 from ..db import get_db
 from ..models.accounting import Account, Journal, JournalLine, JournalSource
 from ..models.audit import AuditEvent
@@ -60,6 +61,26 @@ def list_bank_transactions(
         BankTransactionOut.model_validate(r)
         for r in q.order_by(BankTransaction.txn_date.desc()).limit(500).all()
     ]
+
+
+@router.get("/transactions/{txn_id}/suggest")
+def suggest_categorization(
+    txn_id: UUID,
+    ctx: AuthContext = Depends(require_org),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Rule-based (and optionally LLM-augmented) categorization suggestion."""
+    txn = db.get(BankTransaction, txn_id)
+    if txn is None or txn.org_id != ctx.org_id:
+        raise HTTPException(status_code=404, detail="Bank transaction not found")
+    suggestion = suggest_for_transaction(db, txn)
+    return {
+        "transaction_id": str(txn.id),
+        "suggested_account_id": suggestion.account_id,
+        "suggested_account_code": suggestion.account_code,
+        "confidence": float(suggestion.confidence),
+        "rationale": suggestion.rationale,
+    }
 
 
 @router.post("/transactions/{txn_id}/categorize", response_model=BankTransactionOut)

@@ -20,8 +20,12 @@ import { cn, formatCurrency, formatDate } from "@/lib/utils";
 const REPORTS = [
   { key: "pnl", label: "Profit & Loss" },
   { key: "balance-sheet", label: "Balance sheet" },
+  { key: "cash-flow", label: "Cash flow" },
   { key: "trial-balance", label: "Trial balance" },
   { key: "ar-aging", label: "A/R aging" },
+  { key: "ap-aging", label: "A/P aging" },
+  { key: "inventory", label: "Inventory valuation" },
+  { key: "fuel-variance", label: "Fuel variance" },
 ] as const;
 type ReportKey = (typeof REPORTS)[number]["key"];
 
@@ -91,9 +95,327 @@ function ReportsView() {
         <PnLReport entityId={activeEntityId} start={start} end={end} />
       )}
       {report === "balance-sheet" && <BalanceSheet entityId={activeEntityId} asOf={end} />}
+      {report === "cash-flow" && (
+        <CashFlowReport entityId={activeEntityId} start={start} end={end} />
+      )}
       {report === "trial-balance" && <TrialBalance entityId={activeEntityId} asOf={end} />}
       {report === "ar-aging" && <ARAgingReport entityId={activeEntityId} asOf={end} />}
+      {report === "ap-aging" && <APAgingReport entityId={activeEntityId} asOf={end} />}
+      {report === "inventory" && <InventoryReport entityId={activeEntityId} />}
+      {report === "fuel-variance" && (
+        <FuelVarianceReport entityId={activeEntityId} start={start} end={end} />
+      )}
     </div>
+  );
+}
+
+interface CashFlow {
+  operating: { net_income: number; depreciation: number; working_capital_changes: number; total: number };
+  investing: { total: number };
+  financing: { total: number };
+  net_change_in_cash: number;
+  beginning_cash: number;
+  ending_cash: number;
+}
+
+function CashFlowReport({ entityId, start, end }: { entityId: string | null; start: string; end: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["cf", entityId, start, end],
+    queryFn: () =>
+      apiClient.get<CashFlow>(`/reports/cash-flow?entity_id=${entityId}&start=${start}&end=${end}`),
+    enabled: !!entityId,
+  });
+  if (isLoading || !data) return <Skeleton className="h-72 w-full" />;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Cash flow</CardTitle>
+        <CardDescription>
+          Indirect method: starts at net income, layers in non-cash and working-capital
+          adjustments, then investing and financing activity.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Section
+          title="Operating"
+          rows={[
+            { code: "1", name: "Net income", balance: String(data.operating.net_income) },
+            { code: "2", name: "Depreciation (add back)", balance: String(data.operating.depreciation) },
+            {
+              code: "3",
+              name: "Working-capital changes",
+              balance: String(data.operating.working_capital_changes),
+            },
+          ]}
+          total={String(data.operating.total)}
+        />
+        <div className="grid gap-6 md:grid-cols-2 mt-4 pt-4 border-t">
+          <Section
+            title="Investing"
+            rows={[]}
+            total={String(data.investing.total)}
+          />
+          <Section
+            title="Financing"
+            rows={[]}
+            total={String(data.financing.total)}
+          />
+        </div>
+        <div className="mt-6 pt-4 border-t-2 flex items-center justify-between font-semibold">
+          <span>Net change in cash</span>
+          <span
+            className={cn(
+              "tabular",
+              data.net_change_in_cash >= 0 ? "text-success" : "text-destructive"
+            )}
+          >
+            {formatCurrency(data.net_change_in_cash)}
+          </span>
+        </div>
+        <div className="mt-2 flex items-center justify-between text-sm text-muted-foreground">
+          <span>Beginning cash → Ending cash</span>
+          <span className="tabular">
+            {formatCurrency(data.beginning_cash)} → {formatCurrency(data.ending_cash)}
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface AgingRow {
+  vendor?: string;
+  customer?: string;
+  current: number;
+  "1_30": number;
+  "31_60": number;
+  "61_90": number;
+  over_90: number;
+  total: number;
+}
+
+function APAgingReport({ entityId, asOf }: { entityId: string | null; asOf: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["ap-aging", entityId, asOf],
+    queryFn: () =>
+      apiClient.get<(AgingRow & { vendor_id: string })[]>(
+        `/reports/ap-aging?entity_id=${entityId}&as_of=${asOf}`
+      ),
+    enabled: !!entityId,
+  });
+  if (isLoading) return <Skeleton className="h-48 w-full" />;
+  const rows = data ?? [];
+  if (rows.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-12 text-center text-sm text-muted-foreground">
+          No outstanding A/P. Approve bills to populate this report.
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>A/P aging</CardTitle>
+        <CardDescription>By vendor · As of {formatDate(asOf)}</CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Vendor</TableHead>
+              <TableHead className="text-right">Current</TableHead>
+              <TableHead className="text-right">1-30</TableHead>
+              <TableHead className="text-right">31-60</TableHead>
+              <TableHead className="text-right">61-90</TableHead>
+              <TableHead className="text-right">90+</TableHead>
+              <TableHead className="text-right">Total</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.vendor_id}>
+                <TableCell>{r.vendor}</TableCell>
+                <TableCell className="text-right tabular">{formatCurrency(r.current)}</TableCell>
+                <TableCell className="text-right tabular">{formatCurrency(r["1_30"])}</TableCell>
+                <TableCell className="text-right tabular">{formatCurrency(r["31_60"])}</TableCell>
+                <TableCell className="text-right tabular">{formatCurrency(r["61_90"])}</TableCell>
+                <TableCell className="text-right tabular">{formatCurrency(r.over_90)}</TableCell>
+                <TableCell className="text-right tabular font-semibold">{formatCurrency(r.total)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface InvRow {
+  item_id: string;
+  sku: string;
+  name: string;
+  on_hand: number;
+  avg_cost: number;
+  value: number;
+  below_reorder: boolean;
+}
+
+function InventoryReport({ entityId }: { entityId: string | null }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["inv", entityId],
+    queryFn: () =>
+      apiClient.get<InvRow[]>(`/reports/inventory-valuation?entity_id=${entityId}`),
+    enabled: !!entityId,
+  });
+  if (isLoading) return <Skeleton className="h-48 w-full" />;
+  const rows = data ?? [];
+  if (rows.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-12 text-center text-sm text-muted-foreground">
+          No active inventory items.
+        </CardContent>
+      </Card>
+    );
+  }
+  const total = rows.reduce((s, r) => s + r.value, 0);
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>Inventory valuation</CardTitle>
+            <CardDescription>Weighted-average cost × on-hand quantity.</CardDescription>
+          </div>
+          <Badge variant="outline" className="tabular">
+            {formatCurrency(total)} total
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>SKU</TableHead>
+              <TableHead>Item</TableHead>
+              <TableHead className="text-right">On hand</TableHead>
+              <TableHead className="text-right">Avg cost</TableHead>
+              <TableHead className="text-right">Value</TableHead>
+              <TableHead>Reorder</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.item_id}>
+                <TableCell className="font-mono text-xs">{r.sku}</TableCell>
+                <TableCell>{r.name}</TableCell>
+                <TableCell className="text-right tabular">{r.on_hand}</TableCell>
+                <TableCell className="text-right tabular">{formatCurrency(r.avg_cost)}</TableCell>
+                <TableCell className="text-right tabular font-medium">{formatCurrency(r.value)}</TableCell>
+                <TableCell>
+                  {r.below_reorder ? (
+                    <Badge variant="warning">Below reorder</Badge>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">OK</span>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface FuelVarianceResponse {
+  tanks: {
+    tank_id: string;
+    name: string;
+    fuel_type: string;
+    gallons_sold: number;
+    variance_gallons: number;
+    variance_value: number;
+    pct_variance: number;
+  }[];
+  totals: { variance_gallons: number; variance_value: number };
+}
+
+function FuelVarianceReport({
+  entityId,
+  start,
+  end,
+}: {
+  entityId: string | null;
+  start: string;
+  end: string;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["fuel-var", entityId, start, end],
+    queryFn: () =>
+      apiClient.get<FuelVarianceResponse>(
+        `/reports/fuel-variance?entity_id=${entityId}&start=${start}&end=${end}`
+      ),
+    enabled: !!entityId,
+  });
+  if (isLoading || !data) return <Skeleton className="h-48 w-full" />;
+  if (data.tanks.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-12 text-center text-sm text-muted-foreground">
+          No active fuel tanks for this entity.
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Fuel variance</CardTitle>
+        <CardDescription>
+          Stick-reading delta vs metered dispense, per tank, for {formatDate(start)} → {formatDate(end)}.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Tank</TableHead>
+              <TableHead>Fuel</TableHead>
+              <TableHead className="text-right">Gallons sold</TableHead>
+              <TableHead className="text-right">Variance (gal)</TableHead>
+              <TableHead className="text-right">Variance ($)</TableHead>
+              <TableHead className="text-right">%</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.tanks.map((t) => (
+              <TableRow key={t.tank_id}>
+                <TableCell className="font-medium">{t.name}</TableCell>
+                <TableCell>
+                  <Badge variant="outline" className="capitalize">{t.fuel_type}</Badge>
+                </TableCell>
+                <TableCell className="text-right tabular">{t.gallons_sold.toFixed(2)}</TableCell>
+                <TableCell
+                  className={cn(
+                    "text-right tabular",
+                    Math.abs(t.variance_gallons) > 0 && "font-medium"
+                  )}
+                >
+                  {t.variance_gallons.toFixed(2)}
+                </TableCell>
+                <TableCell className="text-right tabular">{formatCurrency(t.variance_value)}</TableCell>
+                <TableCell className="text-right tabular text-muted-foreground">
+                  {t.pct_variance.toFixed(2)}%
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }
 

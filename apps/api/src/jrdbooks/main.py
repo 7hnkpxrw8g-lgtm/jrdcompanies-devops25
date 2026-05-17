@@ -15,6 +15,7 @@ from .config import get_settings
 from .logging_config import configure_logging
 from .routers import (
     accounts,
+    audit,
     auth,
     banking,
     customers,
@@ -98,6 +99,7 @@ def create_app() -> FastAPI:
     app.include_router(banking.router)
     app.include_router(reports.router)
     app.include_router(dashboard.router)
+    app.include_router(audit.router)
 
     @app.get("/health", tags=["meta"])
     def health() -> dict:

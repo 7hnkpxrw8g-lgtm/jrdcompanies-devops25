@@ -197,6 +197,89 @@ def test_balance_sheet_balances(client: TestClient) -> None:
     assert delta < 0.01, f"Balance sheet does not balance: {delta} / {bs}"
 
 
+def test_ai_suggestion_for_known_merchant(client: TestClient) -> None:
+    token = auth(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    txns = client.get(
+        "/banking/transactions?status=unreconciled",
+        headers=headers,
+    ).json()
+    # Find a Sunoco transaction the seed creates
+    sunoco = next((t for t in txns if "sunoco" in t["description"].lower()), None)
+    if sunoco is None:
+        return  # seed RNG didn't produce one this run
+    r = client.get(
+        f"/banking/transactions/{sunoco['id']}/suggest", headers=headers
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["suggested_account_code"] == "5100"
+    assert body["confidence"] >= 0.85
+
+
+def test_cash_flow_report(client: TestClient) -> None:
+    from datetime import date, timedelta
+
+    token = auth(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    entity_id = client.get("/entities", headers=headers).json()[0]["id"]
+    start = (date.today() - timedelta(days=60)).isoformat()
+    end = date.today().isoformat()
+    r = client.get(
+        f"/reports/cash-flow?entity_id={entity_id}&start={start}&end={end}",
+        headers=headers,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    for k in ("operating", "investing", "financing", "net_change_in_cash"):
+        assert k in body
+
+
+def test_trial_balance_csv_export(client: TestClient) -> None:
+    token = auth(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    entity_id = client.get("/entities", headers=headers).json()[0]["id"]
+    r = client.get(
+        f"/reports/trial-balance.csv?entity_id={entity_id}",
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    body = r.text
+    # Header + at least one data row
+    lines = body.strip().splitlines()
+    assert len(lines) >= 2
+    assert lines[0].startswith("code,name,type,debit,credit")
+
+
+def test_audit_events_endpoint(client: TestClient) -> None:
+    token = auth(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    r = client.get("/audit/events?limit=10", headers=headers)
+    assert r.status_code == 200
+    rows = r.json()
+    # Seed produces audit events for journal posts
+    assert isinstance(rows, list)
+
+
+def test_ap_aging_report(client: TestClient) -> None:
+    token = auth(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    entity_id = client.get("/entities", headers=headers).json()[0]["id"]
+    r = client.get(f"/reports/ap-aging?entity_id={entity_id}", headers=headers)
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+
+def test_inventory_valuation_report(client: TestClient) -> None:
+    token = auth(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    entity_id = client.get("/entities", headers=headers).json()[0]["id"]
+    r = client.get(f"/reports/inventory-valuation?entity_id={entity_id}", headers=headers)
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+
 def test_categorize_bank_transaction(client: TestClient) -> None:
     token = auth(client)
     headers = {"Authorization": f"Bearer {token}"}

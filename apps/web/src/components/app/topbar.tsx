@@ -1,6 +1,7 @@
 "use client";
 
-import { Bell, ChevronDown, LogOut, Search } from "lucide-react";
+import { Bell, LogOut, Search } from "lucide-react";
+import { ThemeToggle } from "./theme-toggle";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -58,6 +59,8 @@ export function Topbar() {
             ))}
           </select>
         ) : null}
+
+        <ThemeToggle />
 
         <Button variant="ghost" size="icon" aria-label="Notifications">
           <Bell className="h-4 w-4" />
