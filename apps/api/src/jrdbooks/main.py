@@ -18,11 +18,14 @@ from .routers import (
     audit,
     auth,
     banking,
+    bills,
     customers,
     dashboard,
+    imports,
     invoices,
     journals,
     organizations,
+    periods,
     reports,
 )
 
@@ -100,6 +103,9 @@ def create_app() -> FastAPI:
     app.include_router(reports.router)
     app.include_router(dashboard.router)
     app.include_router(audit.router)
+    app.include_router(bills.router)
+    app.include_router(imports.router)
+    app.include_router(periods.router)
 
     @app.get("/health", tags=["meta"])
     def health() -> dict:

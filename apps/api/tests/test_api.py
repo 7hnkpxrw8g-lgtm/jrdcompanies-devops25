@@ -280,6 +280,119 @@ def test_inventory_valuation_report(client: TestClient) -> None:
     assert isinstance(r.json(), list)
 
 
+def test_create_bill_with_approval_posts_ap_journal(client: TestClient) -> None:
+    from datetime import date, timedelta
+
+    token = auth(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    entity_id = client.get("/entities", headers=headers).json()[0]["id"]
+    vendors = client.get("/vendors", headers=headers).json()
+    vendor_id = vendors[0]["id"]
+    accounts = client.get(f"/accounts?entity_id={entity_id}", headers=headers).json()
+    expense_acct = next(a for a in accounts if a["code"] == "6100")  # Rent
+
+    payload = {
+        "entity_id": entity_id,
+        "vendor_id": vendor_id,
+        "issue_date": date.today().isoformat(),
+        "due_date": (date.today() + timedelta(days=30)).isoformat(),
+        "currency": "USD",
+        "lines": [
+            {
+                "line_no": 1,
+                "expense_account_id": expense_acct["id"],
+                "description": "May rent",
+                "amount": "1500.00",
+            }
+        ],
+    }
+    r = client.post("/bills?approve=true", json=payload, headers=headers)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["status"] == "approved"
+    assert body["approval_status"] == "approved"
+    assert float(body["total"]) == 1500.0
+
+    # Verify the AP journal landed in the ledger
+    bills_list = client.get(f"/bills?entity_id={entity_id}", headers=headers).json()
+    assert any(b["bill_no"] == body["bill_no"] for b in bills_list)
+
+
+def test_close_period_and_reject_post(client: TestClient) -> None:
+
+    token = auth(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    entity_id = client.get("/entities", headers=headers).json()[0]["id"]
+
+    # Close a period in the far past so it doesn't conflict with the seed data
+    payload = {
+        "entity_id": entity_id,
+        "fiscal_year": 2024,
+        "fiscal_period": 1,
+        "period_start": "2024-01-01",
+        "period_end": "2024-01-31",
+    }
+    r = client.post("/periods/close", json=payload, headers=headers)
+    assert r.status_code == 201, r.text
+
+    # Listing closed periods returns it
+    r = client.get(f"/periods?entity_id={entity_id}", headers=headers)
+    assert r.status_code == 200
+    rows = r.json()
+    assert any(p["fiscal_year"] == 2024 and p["fiscal_period"] == 1 for p in rows)
+
+    # Posting into that period should be rejected
+    accounts = client.get(f"/accounts?entity_id={entity_id}", headers=headers).json()
+    cash = next(a for a in accounts if a["code"] == "1010")
+    rev = next(a for a in accounts if a["code"] == "4000")
+    bad = {
+        "entity_id": entity_id,
+        "posting_date": "2024-01-15",
+        "memo": "Should be rejected",
+        "lines": [
+            {"line_no": 1, "account_id": cash["id"], "debit": "10", "credit": "0"},
+            {"line_no": 2, "account_id": rev["id"], "debit": "0", "credit": "10"},
+        ],
+    }
+    r = client.post("/journals?post=true", json=bad, headers=headers)
+    assert r.status_code == 400
+    assert "closed period" in r.json()["detail"].lower()
+
+
+def test_csv_bank_import(client: TestClient) -> None:
+    token = auth(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    banks = client.get("/banking/accounts", headers=headers).json()
+    bank = banks[0]
+
+    csv_text = (
+        "date,description,amount,external_id\n"
+        "2026-05-01,NAPA Auto Parts,-87.45,csv-test-001\n"
+        "2026-05-02,Sunoco Wholesale,-2450.10,csv-test-002\n"
+        "2026-05-03,ACH from Acme Logistics,5300.00,csv-test-003\n"
+    )
+    r = client.post(
+        f"/imports/bank-csv?bank_account_id={bank['id']}",
+        files={"file": ("test.csv", csv_text, "text/csv")},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["imported"] == 3
+    assert body["skipped_duplicates"] == 0
+    assert body["ai_suggestions"] >= 2  # NAPA and Sunoco should match rules
+
+    # Re-uploading the same file is idempotent
+    r2 = client.post(
+        f"/imports/bank-csv?bank_account_id={bank['id']}",
+        files={"file": ("test.csv", csv_text, "text/csv")},
+        headers=headers,
+    )
+    assert r2.status_code == 200
+    assert r2.json()["imported"] == 0
+    assert r2.json()["skipped_duplicates"] == 3
+
+
 def test_categorize_bank_transaction(client: TestClient) -> None:
     token = auth(client)
     headers = {"Authorization": f"Bearer {token}"}
