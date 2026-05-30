@@ -63,7 +63,9 @@ services:
     depends_on:
       - api
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      # Browser calls same-origin /api/*; the Next server proxies to the api
+      # container. No NEXT_PUBLIC_API_URL so the client stays same-origin.
+      API_PROXY_TARGET: http://api:8000
       NODE_ENV: production
     ports:
       - "3000:3000"

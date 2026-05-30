@@ -5,8 +5,7 @@ import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { API_BASE } from "@/lib/api";
 
 export function CsvImportButton({ bankAccountId }: { bankAccountId: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
