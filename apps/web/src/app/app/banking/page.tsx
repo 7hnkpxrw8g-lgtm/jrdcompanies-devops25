@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { CsvImportButton } from "@/components/app/csv-import";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,8 +62,9 @@ export default function BankingPage() {
                   <div className="text-2xl font-semibold tabular">
                     {formatCurrency(acct.last_balance, acct.currency)}
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    Synced {acct.last_sync_at ? relativeDate(acct.last_sync_at) : "—"}
+                  <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Synced {acct.last_sync_at ? relativeDate(acct.last_sync_at) : "—"}</span>
+                    <CsvImportButton bankAccountId={acct.id} />
                   </div>
                 </CardContent>
               </Card>

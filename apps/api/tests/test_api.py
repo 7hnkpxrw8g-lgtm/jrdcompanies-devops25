@@ -280,6 +280,27 @@ def test_inventory_valuation_report(client: TestClient) -> None:
     assert isinstance(r.json(), list)
 
 
+def test_stripe_webhook_is_idempotent(client: TestClient) -> None:
+    """Posting the same Stripe event twice returns duplicate=True the second time."""
+    payload = {
+        "id": "evt_test_smoke_001",
+        "type": "payout.paid",
+        "data": {"object": {"id": "po_001", "amount": 5000}},
+    }
+    r1 = client.post("/webhooks/stripe", json=payload)
+    assert r1.status_code == 200
+    assert r1.json()["duplicate"] is False
+
+    r2 = client.post("/webhooks/stripe", json=payload)
+    assert r2.status_code == 200
+    assert r2.json()["duplicate"] is True
+
+
+def test_stripe_webhook_rejects_missing_id(client: TestClient) -> None:
+    r = client.post("/webhooks/stripe", json={"type": "test"})
+    assert r.status_code == 400
+
+
 def test_create_bill_with_approval_posts_ap_journal(client: TestClient) -> None:
     from datetime import date, timedelta
 

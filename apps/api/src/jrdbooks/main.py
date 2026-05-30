@@ -27,6 +27,7 @@ from .routers import (
     organizations,
     periods,
     reports,
+    webhooks,
 )
 
 settings = get_settings()
@@ -106,6 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(bills.router)
     app.include_router(imports.router)
     app.include_router(periods.router)
+    app.include_router(webhooks.router)
 
     @app.get("/health", tags=["meta"])
     def health() -> dict:
