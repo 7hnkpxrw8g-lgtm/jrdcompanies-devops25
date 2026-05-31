@@ -1,0 +1,22 @@
+{
+    email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+    encode zstd gzip
+
+    # Same-origin /api/* -> API container
+    handle_path /api/* {
+        reverse_proxy api:8000
+    }
+
+    # Everything else -> Next.js
+    handle {
+        reverse_proxy web:3000
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}

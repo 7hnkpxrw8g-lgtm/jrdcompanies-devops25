@@ -1,0 +1,85 @@
+name: jrdbooks-prod
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-jrdbooks.jrdcompanies.com}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@jrdcompanies.com}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+      - api
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jrd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-jrdbooks}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jrd}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+  api:
+    build:
+      context: ../apps/api
+      dockerfile: ../../infra/Dockerfile.api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-jrd}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-jrdbooks}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: production
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (long random string)}
+      CORS_ORIGINS: '["https://${DOMAIN:-jrdbooks.jrdcompanies.com}"]'
+      LOG_LEVEL: INFO
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      PLAID_CLIENT_ID: ${PLAID_CLIENT_ID:-}
+      PLAID_SECRET: ${PLAID_SECRET:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    command: >
+      sh -c "alembic upgrade head &&
+             (python -m jrdbooks.seed || true) &&
+             uvicorn jrdbooks.main:app --host 0.0.0.0 --port 8000"
+
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: ../../infra/Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: production
+      API_PROXY_TARGET: http://api:8000
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  redis_data:
