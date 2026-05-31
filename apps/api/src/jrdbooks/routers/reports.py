@@ -74,11 +74,18 @@ def pnl_report(
     expense_total = ZERO
     for acct in accounts:
         natural = signed_balance_for_type(sums[acct.id], acct.type)
-        if acct.type in {AccountType.REVENUE, AccountType.CONTRA_REVENUE}:
+        if acct.type == AccountType.REVENUE:
             revenue.append(
                 PnLRow(account_id=acct.id, code=acct.code, name=acct.name, amount=natural)
             )
             revenue_total += natural
+        elif acct.type == AccountType.CONTRA_REVENUE:
+            # Contra-revenue (e.g. sales discounts) reduces revenue. Display as
+            # a negative within the revenue section and subtract from the total.
+            revenue.append(
+                PnLRow(account_id=acct.id, code=acct.code, name=acct.name, amount=-natural)
+            )
+            revenue_total -= natural
         elif acct.type == AccountType.EXPENSE:
             expense.append(
                 PnLRow(account_id=acct.id, code=acct.code, name=acct.name, amount=natural)
@@ -123,22 +130,33 @@ def balance_sheet_report(
         if amount == 0:
             continue
         natural = signed_balance_for_type(amount, acct.type)
-        row = BalanceSheetRow(
-            account_id=acct.id, code=acct.code, name=acct.name, balance=natural
-        )
-        if acct.type in {AccountType.ASSET, AccountType.CONTRA_ASSET}:
-            assets.append(row)
+        if acct.type == AccountType.ASSET:
+            assets.append(BalanceSheetRow(account_id=acct.id, code=acct.code, name=acct.name, balance=natural))
             assets_total += natural
-        elif acct.type in {AccountType.LIABILITY, AccountType.CONTRA_LIABILITY}:
-            liabilities.append(row)
-            liabilities_total += natural
-        elif acct.type == AccountType.EQUITY:
-            equity.append(row)
-            equity_total += natural
-        elif acct.type in {AccountType.REVENUE, AccountType.CONTRA_REVENUE, AccountType.EXPENSE}:
-            retained_earnings += signed_balance_for_type(amount, acct.type) * (
-                -1 if acct.type == AccountType.EXPENSE else 1
+        elif acct.type == AccountType.CONTRA_ASSET:
+            # e.g. Accumulated Depreciation: shown inside Assets as a negative
+            # contra row and subtracted from the assets total.
+            assets.append(
+                BalanceSheetRow(account_id=acct.id, code=acct.code, name=acct.name, balance=-natural)
             )
+            assets_total -= natural
+        elif acct.type == AccountType.LIABILITY:
+            liabilities.append(BalanceSheetRow(account_id=acct.id, code=acct.code, name=acct.name, balance=natural))
+            liabilities_total += natural
+        elif acct.type == AccountType.CONTRA_LIABILITY:
+            liabilities.append(
+                BalanceSheetRow(account_id=acct.id, code=acct.code, name=acct.name, balance=-natural)
+            )
+            liabilities_total -= natural
+        elif acct.type == AccountType.EQUITY:
+            equity.append(BalanceSheetRow(account_id=acct.id, code=acct.code, name=acct.name, balance=natural))
+            equity_total += natural
+        elif acct.type == AccountType.REVENUE:
+            retained_earnings += natural
+        elif acct.type == AccountType.CONTRA_REVENUE:
+            retained_earnings -= natural  # discounts reduce RE
+        elif acct.type == AccountType.EXPENSE:
+            retained_earnings -= natural
 
     assets.sort(key=lambda r: r.code)
     liabilities.sort(key=lambda r: r.code)

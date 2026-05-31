@@ -197,6 +197,40 @@ def test_balance_sheet_balances(client: TestClient) -> None:
     assert delta < 0.01, f"Balance sheet does not balance: {delta} / {bs}"
 
 
+def test_dashboard_cash_ties_to_balance_sheet(client: TestClient) -> None:
+    """The dashboard cash KPI must equal balance-sheet cash for the same entity.
+
+    Previously the dashboard read bank_account.last_balance (denormalized feed
+    value) while the balance sheet read the ledger, so any posted journal made
+    them drift. This regression test asserts they always agree.
+    """
+    token = auth(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    entity_id = client.get("/entities", headers=headers).json()[0]["id"]
+    today = date.today().isoformat()
+
+    bs = client.get(
+        f"/reports/balance-sheet?entity_id={entity_id}&as_of={today}",
+        headers=headers,
+    ).json()
+    # Sum cash + bank accounts from the balance sheet (codes 1000-1099 in seed)
+    bs_cash = sum(
+        float(row["balance"])
+        for row in bs["assets"]
+        if row["code"].startswith("10")
+    )
+
+    dash = client.get(
+        f"/dashboard/summary?entity_id={entity_id}",
+        headers=headers,
+    ).json()
+    delta = abs(float(dash["cash_balance"]) - bs_cash)
+    assert delta < 0.01, (
+        f"Dashboard cash (${dash['cash_balance']:,.2f}) does not tie to "
+        f"balance-sheet cash (${bs_cash:,.2f}); off by ${delta:,.4f}"
+    )
+
+
 def test_ai_suggestion_for_known_merchant(client: TestClient) -> None:
     token = auth(client)
     headers = {"Authorization": f"Bearer {token}"}

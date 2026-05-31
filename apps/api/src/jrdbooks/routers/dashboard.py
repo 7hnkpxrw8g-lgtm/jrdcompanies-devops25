@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..accounting import account_balance
 from ..db import get_db
 from ..models.banking import BankAccount, BankTransaction, BankTxStatus
 from ..models.commerce import Bill, DocStatus, Invoice
@@ -34,14 +35,20 @@ def dashboard_summary(
         entity_id=entity_id, start=start_month, end=today, ctx=ctx, db=db
     )
 
-    cash_balance = ZERO
+    # Cash balance comes from the LEDGER, not the bank-feed denormalized value.
+    # This guarantees the dashboard ties to the balance sheet / trial balance —
+    # they all read from the same source of truth (ledger_entry).
     bank_accounts = (
         db.query(BankAccount)
         .filter(BankAccount.org_id == ctx.org_id, BankAccount.entity_id == entity_id)
         .all()
     )
+    cash_balance = ZERO
+    ledger_balance_by_bank: dict = {}
     for ba in bank_accounts:
-        cash_balance += ba.last_balance
+        bal = account_balance(db, ba.ledger_account_id, as_of=today)
+        ledger_balance_by_bank[ba.id] = bal
+        cash_balance += bal
 
     unreconciled = (
         db.query(BankTransaction)
@@ -105,7 +112,11 @@ def dashboard_summary(
             {
                 "id": str(ba.id),
                 "name": ba.name,
-                "balance": float(ba.last_balance),
+                # Authoritative balance comes from the ledger; the feed value is
+                # surfaced separately so users can spot the drift.
+                "balance": float(ledger_balance_by_bank.get(ba.id, ZERO)),
+                "feed_balance": float(ba.last_balance),
+                "drift": float(ledger_balance_by_bank.get(ba.id, ZERO) - ba.last_balance),
                 "currency": ba.currency,
             }
             for ba in bank_accounts
