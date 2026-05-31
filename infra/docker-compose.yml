@@ -1,0 +1,75 @@
+name: jrdbooks
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jrd
+      POSTGRES_PASSWORD: jrd
+      POSTGRES_DB: jrdbooks
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jrd -d jrdbooks"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ../apps/api
+      dockerfile: ../../infra/Dockerfile.api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://jrd:jrd@postgres:5432/jrdbooks
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: local
+      JWT_SECRET: dev-secret-not-for-production
+      CORS_ORIGINS: '["http://localhost:3000"]'
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "alembic upgrade head &&
+             python -m jrdbooks.seed || true &&
+             uvicorn jrdbooks.main:app --host 0.0.0.0 --port 8000"
+
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: ../../infra/Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      # Browser calls same-origin /api/*; the Next server proxies to the api
+      # container. No NEXT_PUBLIC_API_URL so the client stays same-origin.
+      API_PROXY_TARGET: http://api:8000
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
+  redis_data:
